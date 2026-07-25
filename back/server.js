@@ -4,17 +4,22 @@ const { Pool } = require('pg');
 const cors=require("cors");
 const fs = require("fs");
 const webSocket=require("ws")
-const http=require("http")
+const http=require("http");
+const { compose } = require("stream");
 const app = express();
 const server=http.createServer(app)
+let pythonSocket = null;
 //const YOLO = "/home/mypie/cctv-ai-models/detect.py";
 const ESP32_URL = "http://192.168.1.71/stream";
 let latestDetection = null;
+
 // store latest frame
 let latestFrame = null;
 //Databse configuration
    
-app.use(express.json());
+app.use(express.json({
+   limit:"10mb"
+}));
 app.use(cors({
   origin: function (origin, callback) {
     // Allows your local React server, your Pi IP, or local requests through
@@ -46,7 +51,6 @@ console.log("request from UI");
     const queryText = `
       INSERT INTO businesses (name, ocr_enabled, duration_tracking, shared_username, password_hash)
       VALUES ($1, $2, $3, $4, $5)
-
       RETURNING id, name
     `;
     const values = [name, ocrEnabled, durationTracking, sharedUsername, sharedPassword];
@@ -67,20 +71,87 @@ console.log("request from UI");
     res.status(500).json({ error: "Cloud database allocation error." });
   }
 });
-   ///getting detections from python
-app.post("/api/detection/log", (req, res) => {
+   ///gadding a persons image and creating embeddings..
+app.post("/persons", async(req,res)=>{
+    console.log(pythonSocket,"python websocket connection...")
 
-    console.log("=================================");
-    console.log("📥 Detection received from Python");
-    console.log(req.body);
-    console.log("=================================");
+    try {
 
-    res.json({
-        success: true
-    });
+        console.log("====================");
+        console.log("New Person");
+        console.log("====================");
+        console.log(req.body.first_name);
+        console.log(req.body.last_name);
+        console.log(req.body.person_type); 
+        console.log(req.body.businessId)
+        ////
+      let   fn=req.body.first_name
+      let     ln=req.body.last_name
+      let      pt=req.body.person_type
+      let img= req.body.image
+      let business=req.body.businessId
+
+        console.log(
+            "Image received:",
+            req.body.image.length
+        );
+
+
+        /*
+          NEXT:
+          Send image to Python
+          Generate embedding
+        */
+       
+       if(!pythonSocket){
+
+            return res.status(500).json({
+
+                success:false,
+
+                message:"Python AI not connected"
+
+            });
+
+        }
+        console.log("now trying to send it to python...")
+       pythonSocket.send(
+
+            JSON.stringify({
+
+                type:"create_embedding",
+
+                first_name:fn,
+
+                last_name:ln,
+
+                person_type:pt,
+                business:business,
+
+                image:img
+
+            })
+        );
+
+       console.log("image sent to python...")
+        res.json({
+            success:true,
+            message:"Person received"
+        });
+
+
+    } catch(err){
+
+        console.log(err);
+
+        res.status(500).json({
+            success:false
+        });
+
+    }
 
 });
-//getting live video stream from  python
+//sending video to react
 app.get("/stream", (req, res) => {
       
     res.writeHead(200, {
@@ -122,7 +193,7 @@ console.log("login request")
 
   try {
 const result = await pool.query(
-      "SELECT id, name, ocr_enabled AS \"ocrEnabled\", duration_tracking AS \"durationTracking\", password_hash FROM businesses WHERE shared_username = $1", 
+      "SELECT id,faceid, name, ocr_enabled AS \"ocrEnabled\", duration_tracking AS \"durationTracking\", password_hash FROM businesses WHERE shared_username = $1", 
       [username]
     );
     if (result.rows.length === 0 || result.rows[0].password_hash !== password) {
@@ -133,6 +204,7 @@ const result = await pool.query(
      console.log(business,"business")
     res.json({
       businessId: business.id,
+      faceid:business.faceid,
       businessName: business.name,
       ocrEnabled: !!business.ocrEnabled,
       durationTracking: !!business.durationTracking
@@ -143,21 +215,17 @@ const result = await pool.query(
 // pull frames continuously from ESP32
 //discontinued...
 //web socket connections
-const ESP32_STREAM_URL = "http://192.168.1.71/stream";
-
 
 async function startESP32Stream(){
+   console.log("Connecting to ESP32 stream...");
 
     const response = await axios({
         method: "get",
-        url: ESP32_STREAM_URL,
+        url: ESP32_URL,
         responseType: "stream"
     });
-
-
+     console.log("Connected to ESP32 stream...");
     let buffer = Buffer.alloc(0);
-
-
     response.data.on(
         "data",
         chunk => {
@@ -167,16 +235,14 @@ async function startESP32Stream(){
                 chunk
             ]);
 
-
             const start = buffer.indexOf(
                 Buffer.from([0xff,0xd8])
             );
 
-
-            const end = buffer.indexOf(
-                Buffer.from([0xff,0xd9])
-            );
-
+           const end = buffer.indexOf(
+          Buffer.from([0xff,0xd9]),
+            start + 2
+             );
 
             if(start !== -1 && end !== -1){
 
@@ -185,18 +251,16 @@ async function startESP32Stream(){
                     end + 2
                 );
 
-
-                buffer = buffer.slice(
-                    end + 2
-                );
-
+                buffer = buffer.slice(   end + 2  );
+//console.log( "📸 Frame received:",  "size:", latestFrame.length,"bytes");
             }
+            
 
         }
+       
     );
 
 }
-
 
 
 
@@ -205,15 +269,55 @@ const ws = new webSocket.Server({
     server
 });
 
+function broadcast(data) {
+
+    ws.clients.forEach(client => {
+
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(data));
+        }
+
+    });
+
+}
+
 ws.on("connection", (socket) => {
     console.log("🐍 Python connected");
-
+    pythonSocket = socket;
     socket.on("message", (message) => {
-      latestFrame=message
+      latestDetection=message
         console.log("📹 Received", message, "bytes");
          const detection = JSON.parse(message.toString());
          console.log('AI',detection);
+          try {
+    // Save plain text password directly to the password_hash column
+    const queryText = `
+      INSERT INTO persons (name, ocr_enabled, duration_tracking, shared_username, password_hash)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, name
+    `;}
+    catch(e){
+      console.log(e,"error insetting embedding..")
+    }
+
+     /// This one was used for broadcasting yolo
+     // SO we will comment it out for now..
+     // broadcast(detection);
     });
+
+    
+    //cloing the websocket connection..
+    socket.on("close", () => {
+
+        console.log(
+            "🐍 Python disconnected"
+        );
+
+
+        pythonSocket = null;
+
+    });
+
 });
 server.listen(80,'0.0.0.0',()=>{
   startESP32Stream();

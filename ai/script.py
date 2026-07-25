@@ -11,15 +11,17 @@ from ocr import PlateReader
 from detect import ObjectDetector
 
 
-NODE_SERVER_URL = "ws://192.168.1.69:80"
+NODE_WS_URL= "ws://192.168.0.102:80"
+TEST_MODE = True
+
 
 #ESP32_STREAM_URL = "http://192.168.1.71/stream"
-ESP32_STREAM_URL = "http://192.168.1.69:80/stream"
+NODE_SERVER_URL = "http://192.168.0.102:80/stream"
 
 print("connecting to websocket...")
 
 ws = websocket.create_connection(
-    NODE_SERVER_URL
+    NODE_WS_URL
 )
 
 print("connection to node established..")
@@ -57,7 +59,7 @@ def send_detection(data):
 def start_surveillance_cluster():
 
     print("🚀 Starting surveillance engine...")
-    print(f"📹 Connecting to {ESP32_STREAM_URL}")
+    print(f"📹 Connecting to {NODE_SERVER_URL}")
 
 
     motion_gatekeeper = MotionFilter()
@@ -80,7 +82,7 @@ def start_surveillance_cluster():
         try:
 
             stream = urllib.request.urlopen(
-                ESP32_STREAM_URL,
+                NODE_SERVER_URL,
                 timeout=10
             )
 
@@ -98,18 +100,12 @@ def start_surveillance_cluster():
                 start_marker = stream_buffer.find(
                     b'\xff\xd8'
                 )
-
-
                 end_marker = stream_buffer.find(
                     b'\xff\xd9',
                     start_marker + 2
                 )
-
-
                 if start_marker == -1 or end_marker == -1:
                     continue
-
-
 
                 jpg_bytes = stream_buffer[
                     start_marker:end_marker + 2
@@ -119,8 +115,7 @@ def start_surveillance_cluster():
                 stream_buffer = stream_buffer[
                     end_marker + 2:
                 ]
-
-
+                
 
                 frame = cv2.imdecode(
                     np.frombuffer(
@@ -129,12 +124,11 @@ def start_surveillance_cluster():
                     ),
                     cv2.IMREAD_COLOR
                 )
-
+                
 
                 if frame is None:
+                    print("Image not found")
                     continue
-
-
 
                 if not motion_gatekeeper.has_significant_motion(frame):
                     continue
@@ -143,35 +137,24 @@ def start_surveillance_cluster():
                     frame
                 )
 
-
                 print(
                     "YOLO RESULTS:",
                     detected_objects
                 )
 
-
                 send_detection(
                     detected_objects
                 )
 
-
-
                 if not detected_objects:
                     continue
 
-
-
                 vehicle_boxes = []
-
-
 
                 for obj in detected_objects:
 
-
                     if obj["confidence"] < 0.4:
                         continue
-
-
 
                     print(
                         "OBJECT:",
@@ -179,8 +162,6 @@ def start_surveillance_cluster():
                         "confidence:",
                         obj["confidence"]
                     )
-
-
 
                     if obj["label"] in VEHICLE_CLASSES:
 
@@ -203,14 +184,10 @@ def start_surveillance_cluster():
                 )
 
 
-
                 for vehicle_id, box in tracked_vehicles.items():
-
 
                     if vehicle_id in processed_vehicle_ids:
                         continue
-
-
 
                     x, y, w, h = box
 
@@ -277,14 +254,9 @@ def start_surveillance_cluster():
 
                         print("=" * 40)
 
-
-
                         processed_vehicle_ids.add(
                             vehicle_id
                         )
-
-
-
                         send_detection(
                             {
                                 "plateNumber": plate,
