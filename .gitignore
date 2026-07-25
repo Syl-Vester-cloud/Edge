@@ -1,0 +1,4 @@
+pi_packages/
+env/
+__pycache__/
+*.log
