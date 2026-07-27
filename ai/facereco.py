@@ -26,6 +26,12 @@ print("Connecting to Node websocket...")
 ws = websocket.create_connection(
     NODE_WS_URL
 )
+def register_python_socket(ws):
+    ws.send(json.dumps({
+        "type": "python_connected"
+    }))
+    print("🐍 Registered with Node as AI")
+register_python_socket(ws)    
 
 ws.settimeout(0.01)
 print("✅ WebSocket connected")
@@ -220,7 +226,7 @@ def process_frame(frame):
         frame
     )
     print("Faces detected:", len(faces))
-    
+
     print(
     "Faces:",
     len(faces),
@@ -273,7 +279,7 @@ def process_frame(frame):
         }
 
 
-        print(result,"results")
+        
         results.append(
             result
         )
@@ -283,7 +289,7 @@ def process_frame(frame):
     return results
 
 def receive_websocket_message():
-    print("receiving websocket messages..")
+   # print("receiving websocket messages..")
 
     try:
 
@@ -292,6 +298,7 @@ def receive_websocket_message():
         if message:
 
             data = json.loads(message)
+            print(data,"creating embedding..in python")
 
             if data["type"] == "create_embedding":
 
@@ -305,7 +312,7 @@ def receive_websocket_message():
                     data["last_name"],
                     data["person_type"]
                 )
-
+               
                 response = {
                     "type": "embedding_created",
                     "first_name": data["first_name"],
@@ -357,18 +364,20 @@ def start_face_recognition():
     buffer = bytes()
 
     last_log = time.time()
+    last_frame_time = time.time()
 
     while True:
 
 
         try:
 
-            if time.time() - last_log >= 1:
+           # if time.time() - last_log >= 1:
 
-                print("Reading frames...")
+               # print("Reading frames...")
 
-                last_log = time.time()
-            buffer += stream.read(4096)
+                #last_log = time.time()
+            
+            buffer += stream.read(8192)
 
 
 
@@ -393,71 +402,71 @@ def start_face_recognition():
 
 
 
-            jpg_bytes = buffer[
+           # jpg_bytes = buffer[
 
-                start_marker:end_marker+2
+              #  start_marker:end_marker+2
 
-            ]
+            #]
+            # find newest frame only
 
-            print(
-               "JPEG size:",
-                len(jpg_bytes)
-                 )
+            last_start = buffer.rfind(b'\xff\xd8')
+            last_end = buffer.find(b'\xff\xd9', last_start)
 
-            buffer = buffer[
+            if last_start != -1 and last_end != -1:
 
-                end_marker+2:
+                jpg_bytes = buffer[last_start:last_end+2]
 
-            ]
-
+                buffer = buffer[last_end+2:]
 
 
-            frame = cv2.imdecode(
 
-                np.frombuffer(
+
+                frame = cv2.imdecode(
+
+                 np.frombuffer(
 
                     jpg_bytes,
 
                     dtype=np.uint8
 
-                ),
+                 ),
 
                 cv2.IMREAD_COLOR
 
-            )
+                )
 
-            print("Frame shape:", frame.shape)
+            #print("Frame shape:", frame.shape)
 
-            if frame is None:
+                if frame is None:
 
-                continue
+                   continue
 
 
 
-            faces = process_frame(
+                faces = process_frame(
                 frame
-            )
+                )
 
 
 
-            if faces:
+                if faces:
 
 
-                print(
+                    print(
                     "Detected faces:",
                     len(faces)
-                )
+                    )
 
 
-                send_detection(
+                    send_detection(
                     faces
-                )
+                    )
 
             receive_websocket_message()
 
-            time.sleep(
-                0.2
-            )
+           # time.sleep(
+            #    0.2
+           # )
             
 
         except Exception as e:

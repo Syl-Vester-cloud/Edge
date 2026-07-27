@@ -9,6 +9,7 @@ const { compose } = require("stream");
 const app = express();
 const server=http.createServer(app)
 let pythonSocket = null;
+let reactWebsocket=[]
 //const YOLO = "/home/mypie/cctv-ai-models/detect.py";
 const ESP32_URL = "http://192.168.1.71/stream";
 let latestDetection = null;
@@ -71,9 +72,9 @@ console.log("request from UI");
     res.status(500).json({ error: "Cloud database allocation error." });
   }
 });
-   ///gadding a persons image and creating embeddings..
+   ///adding a persons image and creating embeddings..
 app.post("/persons", async(req,res)=>{
-    console.log(pythonSocket,"python websocket connection...")
+    console.log(pythonSocket?.id,"python websocket connection...")
 
     try {
 
@@ -299,16 +300,38 @@ function broadcast(data) {
     });
 
 }
+let connectionId=0
 
 ws.on("connection", (socket) => {
-    console.log("🐍 Python connected");
-    pythonSocket = socket;
+    //console.log("🐍 Python connected");
+
+    console.log("New websocket client connected");
+     connectionId++;
+
+    socket.id = connectionId;
+
+    console.log(`Client ${socket.id} connected`)
+    
     socket.on("message",async (message) => {
+      console.log("Raw websocket message:", message.toString());
+       console.log(`Client ${socket.id} says:`, message.toString());
       latestDetection=message
         console.log("📹 Received", message, "bytes");
          const detection = JSON.parse(message.toString());
          console.log('AI',detection);
-         if(detection.type==="creating_embbeding"){
+         if(detection.type === "python_connected"){
+
+            pythonSocket = socket;
+
+            console.log(
+                "🐍 Python AI connected:",
+                socket.id
+            );
+
+            return;
+        }
+         if(detection.type==="embedding_created"){
+          
           try {
     // Save plain text password directly to the password_hash column
     const queryText = `
@@ -329,13 +352,13 @@ ws.on("connection", (socket) => {
        console.log("comapering faces..")
        try {
 const result = await pool.query(
-      "SELECT id, business_id, first_name, last_name, person_type,embedding FROM persons", 
+      "SELECT id, business_id, first_name, last_name, person_type,embedding FROM persons WHERE embedding IS NOT NULL", 
       
     );
     
     const faces_embedding_in_db = result.rows;
     // console.log(dbembedding.embedding.length,"embedding")
-     //console.log(faces_embedding_in_db.business_id,"embedding")
+     console.log(faces_embedding_in_db,"embedding from db")
      const LivecameraEmbedding=detection.data[0].embedding;
      //compare people
      let bestMatch = null;
@@ -343,34 +366,41 @@ let highestScore = -1;
 
 for (const person of faces_embedding_in_db) {
 
-    const score = cosineSimilarity(
-        LivecameraEmbedding,
-        person.embedding
-    );
+    const score = cosineSimilarity( LivecameraEmbedding,person.embedding);
 
-    console.log(  person.first_name,score,"score...");
+    console.log(person.first_name,score,"score...");
 
     if (score > highestScore) {
 
         highestScore = score;
         bestMatch = person;
+        console.log(bestMatch,"best match")
+        pythonSocket.send(
+
+            JSON.stringify({
+
+                type:"match_face",
+
+                person:bestMatch
+
+            })
+        );
 
     }
 
 }
-   /* res.json({
-
-      businessId: embedding.id,
-      'last_name':embedding.first_name,
-      'first_name':embedding.last_name,
-      embedding:embedding.embedding
-     
-    });*/
-   
+  
   } catch (err) {   console.log(err,"websocket error..")
        
     }
   }
+  if(detection.type === "dashboard_connected"){
+
+            console.log("This is React");
+
+           // reactSockets.push(socket);
+
+        }
      /// This one was used for broadcasting yolo
      // SO we will comment it out for now..
      // broadcast(detection);
@@ -378,15 +408,38 @@ for (const person of faces_embedding_in_db) {
 
     
     //cloing the websocket connection..
-    socket.on("close", () => {
+    socket.on("close", (code,reason) => {
+
+       // console.log("🐍 Python disconnected"   );
+        console.log(
+        "Closing socket:",
+        socket.id
+    );
+
+    console.log(
+        "Python socket currently:",
+        pythonSocket?.id
+    );
+
+
+    if (socket === pythonSocket) {
 
         console.log(
             "🐍 Python disconnected"
         );
 
-
         pythonSocket = null;
 
+    }
+
+
+    console.log(
+        `Client ${socket.id} disconnected`,
+        {
+            code,
+            reason: reason.toString()
+        }
+    );
     });
 
 });
