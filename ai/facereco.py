@@ -27,7 +27,7 @@ ws = websocket.create_connection(
     NODE_WS_URL
 )
 
-
+ws.settimeout(0.01)
 print("✅ WebSocket connected")
 
 # ==========================
@@ -95,8 +95,8 @@ def create_embedding(base64_image,first_name,
         faces = face_engine.get(
             image
         )
-
-
+        
+       
         print(
             "Enrollment faces:",
             len(faces)
@@ -123,7 +123,7 @@ def create_embedding(base64_image,first_name,
 
            ws.send(json.dumps({
 
-           "type": "embedding_created",
+           "type": "embedding_not_created",
 
            "success": False,
 
@@ -135,7 +135,7 @@ def create_embedding(base64_image,first_name,
 
              ws.send(json.dumps({
 
-             "type": "embedding_created",
+             "type": "creating_embbeding",
 
               "success": True,
 
@@ -151,7 +151,7 @@ def create_embedding(base64_image,first_name,
 
 #After we create the embedding then we send it to node and install in the db...
 
-        print("📤 Embedding sent to Node")
+        print("📤 Embedding created and  sent to Node")
     except Exception as e:
 
         print(
@@ -160,11 +160,11 @@ def create_embedding(base64_image,first_name,
         )
 
         return None
-# ==========================
+
+ #comapering facess.
+    # ==========================
 # SEND DATA TO NODE
 # ==========================
-
-
 def send_detection(data):
 
 
@@ -200,13 +200,19 @@ def send_detection(data):
 
 
 # ==========================
-# FACE PROCESSING
+# FACE PROCESSING AND CREATING EMBEDDING FOR THE LIVE CAMERA..
 # ==========================
-
+frame_counter = 0
 
 def process_frame(frame):
+    global frame_counter
 
+    frame_counter += 1
 
+    if frame_counter % 30 == 0:
+        filename = f"debug_frame_{frame_counter}.jpg"
+        cv2.imwrite(filename, frame)
+        print("Saved:", filename)
     results = []
 
 
@@ -214,6 +220,17 @@ def process_frame(frame):
         frame
     )
     print("Faces detected:", len(faces))
+    
+    print(
+    "Faces:",
+    len(faces),
+    [
+        round(float(face.det_score), 3)
+        for face in faces
+    ]
+    )
+    #called to compare faces from live frames..
+    #compare_faces(faces)
 
     for face in faces:
 
@@ -248,7 +265,6 @@ def process_frame(frame):
                     int
                 ).tolist(),
 
-
             "det_score":
                 float(
                     face.det_score
@@ -257,7 +273,7 @@ def process_frame(frame):
         }
 
 
-
+        print(result,"results")
         results.append(
             result
         )
@@ -266,7 +282,49 @@ def process_frame(frame):
 
     return results
 
+def receive_websocket_message():
+    print("receiving websocket messages..")
 
+    try:
+
+        message = ws.recv()
+
+        if message:
+
+            data = json.loads(message)
+
+            if data["type"] == "create_embedding":
+
+                print(
+                    "Creating embedding..."
+                )
+
+                embedding = create_embedding(
+                    data["image"],
+                    data["first_name"],
+                    data["last_name"],
+                    data["person_type"]
+                )
+
+                response = {
+                    "type": "embedding_created",
+                    "first_name": data["first_name"],
+                    "last_name": data["last_name"],
+                    "person_type": data["person_type"],
+                    "business": data["business"],
+                    "embedding": embedding
+                }
+
+                ws.send(
+                    json.dumps(response)
+                )
+
+
+    except websocket.WebSocketTimeoutException:
+
+        # no message received
+        pass
+    
 
 # ==========================
 # STREAM READER HTTP reading live frames from python..
@@ -298,15 +356,19 @@ def start_face_recognition():
 
     buffer = bytes()
 
-
+    last_log = time.time()
 
     while True:
 
 
         try:
 
+            if time.time() - last_log >= 1:
 
-            buffer += stream.read(1)
+                print("Reading frames...")
+
+                last_log = time.time()
+            buffer += stream.read(4096)
 
 
 
@@ -337,7 +399,10 @@ def start_face_recognition():
 
             ]
 
-
+            print(
+               "JPEG size:",
+                len(jpg_bytes)
+                 )
 
             buffer = buffer[
 
@@ -361,7 +426,7 @@ def start_face_recognition():
 
             )
 
-
+            print("Frame shape:", frame.shape)
 
             if frame is None:
 
@@ -388,62 +453,12 @@ def start_face_recognition():
                     faces
                 )
 
-
+            receive_websocket_message()
 
             time.sleep(
                 0.2
             )
-
-            #receiving websocket messages from nodejs
-            message = ws.recv()
-
-
-            data = json.loads(
-            message
-            )
-
-
-            if data["type"] == "create_embedding":
-               print(type(data["image"]))
-               print(len(data["image"]))
-               print(data["image"][:50]) 
-               print(
-               "Creating embedding for:",
-               data["first_name"]
-               )
-
-
-               embedding = create_embedding(
-                data["image"],
-                data["first_name"],
-                data["last_name"],
-                data["person_type"]
-                )
-
-
-               response = {
-
-                "type":"embedding_created",
-
-                "first_name":data["first_name"],
-
-                "last_name":data["last_name"],
-
-                "person_type":data["person_type"],
-
-                "embedding":embedding
-
-                }
-
-
-               ws.send(
-                json.dumps(response)
-                )
-
-
-               print(
-                "📤 Embedding sent to Node"
-                )
+            
 
         except Exception as e:
 

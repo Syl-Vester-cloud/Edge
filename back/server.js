@@ -83,13 +83,13 @@ app.post("/persons", async(req,res)=>{
         console.log(req.body.first_name);
         console.log(req.body.last_name);
         console.log(req.body.person_type); 
-        console.log(req.body.businessId)
+        console.log(req.body.business)
         ////
       let   fn=req.body.first_name
       let     ln=req.body.last_name
       let      pt=req.body.person_type
       let img= req.body.image
-      let business=req.body.businessId
+      let business=req.body.business
 
         console.log(
             "Image received:",
@@ -269,6 +269,25 @@ const ws = new webSocket.Server({
     server
 });
 
+/// cosine function math to comapre faces..
+function cosineSimilarity(a, b) {
+
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+
+        dot += a[i] * b[i];
+
+        normA += a[i] * a[i];
+
+        normB += b[i] * b[i];
+    }
+
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
 function broadcast(data) {
 
     ws.clients.forEach(client => {
@@ -284,22 +303,74 @@ function broadcast(data) {
 ws.on("connection", (socket) => {
     console.log("🐍 Python connected");
     pythonSocket = socket;
-    socket.on("message", (message) => {
+    socket.on("message",async (message) => {
       latestDetection=message
         console.log("📹 Received", message, "bytes");
          const detection = JSON.parse(message.toString());
          console.log('AI',detection);
+         if(detection.type==="creating_embbeding"){
           try {
     // Save plain text password directly to the password_hash column
     const queryText = `
-      INSERT INTO persons (name, ocr_enabled, duration_tracking, shared_username, password_hash)
+      INSERT INTO persons (first_name, last_name, person_type, embedding, business_id)
       VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, name
-    `;}
+    `;
+     const values = [detection.first_name, detection.last_name,
+       detection.person_type, detection.embedding,detection.business];
+    const result = await pool.query(queryText, values);
+    console.log("person embeding successfully added...",result)
+  
+  }
     catch(e){
       console.log(e,"error insetting embedding..")
     }
+  }
+      if(detection.type=="face_embedding"){
+       console.log("comapering faces..")
+       try {
+const result = await pool.query(
+      "SELECT id, business_id, first_name, last_name, person_type,embedding FROM persons", 
+      
+    );
+    
+    const faces_embedding_in_db = result.rows;
+    // console.log(dbembedding.embedding.length,"embedding")
+     //console.log(faces_embedding_in_db.business_id,"embedding")
+     const LivecameraEmbedding=detection.data[0].embedding;
+     //compare people
+     let bestMatch = null;
+let highestScore = -1;
 
+for (const person of faces_embedding_in_db) {
+
+    const score = cosineSimilarity(
+        LivecameraEmbedding,
+        person.embedding
+    );
+
+    console.log(  person.first_name,score,"score...");
+
+    if (score > highestScore) {
+
+        highestScore = score;
+        bestMatch = person;
+
+    }
+
+}
+   /* res.json({
+
+      businessId: embedding.id,
+      'last_name':embedding.first_name,
+      'first_name':embedding.last_name,
+      embedding:embedding.embedding
+     
+    });*/
+   
+  } catch (err) {   console.log(err,"websocket error..")
+       
+    }
+  }
      /// This one was used for broadcasting yolo
      // SO we will comment it out for now..
      // broadcast(detection);
