@@ -9,7 +9,7 @@ const { compose } = require("stream");
 const app = express();
 const server=http.createServer(app)
 let pythonSocket = null;
-let reactWebsocket=[]
+let reactWebsocket=null;
 //const YOLO = "/home/mypie/cctv-ai-models/detect.py";
 const ESP32_URL = "http://192.168.1.71/stream";
 let latestDetection = null;
@@ -374,18 +374,18 @@ for (const person of faces_embedding_in_db) {
 
         highestScore = score;
         bestMatch = person;
-        console.log(bestMatch,"best match")
-        pythonSocket.send(
+        console.log(bestMatch,"best match",socket)
+        reactWebsocket.send(
 
             JSON.stringify({
 
-                type:"match_face",
+                type:"matched_face",
 
                 person:bestMatch
 
             })
         );
-
+       console.log("data sent to react..")
     }
 
 }
@@ -395,7 +395,7 @@ for (const person of faces_embedding_in_db) {
     }
   }
   if(detection.type === "dashboard_connected"){
-
+            reactWebsocket=socket;
             console.log("This is React");
 
            // reactSockets.push(socket);
